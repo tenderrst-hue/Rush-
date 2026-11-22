@@ -54,7 +54,7 @@ public class MainActivity extends Activity {
         } else if (savedDeadline > 0 && System.currentTimeMillis() >= savedDeadline) {
             phase = wasHidden ? 5 : 6;
             game.invalidate();
-            if (phase == 6) handler.postDelayed(this::finish, 3000);
+            if (phase == 6) handler.postDelayed(this::exitPrank, 3000);
         } else if (Intent.ACTION_VIEW.equals(getIntent().getAction())) {
             deadline = savedDeadline;
             imagePath = getPreferences(0).getString("imagePath", "");
@@ -63,7 +63,7 @@ public class MainActivity extends Activity {
             if (deadline > 0 && System.currentTimeMillis() >= deadline) phase = hidden ? 5 : 6;
             else phase = hidden ? 4 : 3;
             if (deadline > 0 && System.currentTimeMillis() < deadline) tick();
-            else if (phase == 6) handler.postDelayed(this::finish, 3500);
+            else if (phase == 6) handler.postDelayed(this::exitPrank, 3500);
         } else {
             phase = 0;
             showPermissionScreen();
@@ -210,7 +210,7 @@ public class MainActivity extends Activity {
             boolean hidden = getPreferences(0).getBoolean("hidden", false);
             phase = hidden ? 5 : 6;
             game.invalidate();
-            if (!hidden) handler.postDelayed(this::finish, 3500);
+            if (!hidden) handler.postDelayed(this::exitPrank, 3500);
             return;
         }
         game.secondsLeft = (int)Math.ceil(left / 1000.0);
@@ -226,7 +226,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void finish() { finishAndRemoveTask(); }
+    private void exitPrank() { finishAndRemoveTask(); }
 
     private static void drawCabinet(Canvas c, int w, int h) {
         Paint p = new Paint(3);
