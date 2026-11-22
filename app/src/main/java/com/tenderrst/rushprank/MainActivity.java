@@ -56,7 +56,14 @@ public class MainActivity extends Activity {
             game.invalidate();
             if (phase == 6) handler.postDelayed(this::finish, 3000);
         } else if (Intent.ACTION_VIEW.equals(getIntent().getAction())) {
-            phase = 3;
+            deadline = savedDeadline;
+            imagePath = getPreferences(0).getString("imagePath", "");
+            folderPath = getPreferences(0).getString("folderPath", "");
+            boolean hidden = getPreferences(0).getBoolean("hidden", false);
+            if (deadline > 0 && System.currentTimeMillis() >= deadline) phase = hidden ? 5 : 6;
+            else phase = hidden ? 4 : 3;
+            if (deadline > 0 && System.currentTimeMillis() < deadline) tick();
+            else if (phase == 6) handler.postDelayed(this::finish, 3500);
         } else {
             phase = 0;
             showPermissionScreen();
@@ -124,6 +131,7 @@ public class MainActivity extends Activity {
     private void startSequence() {
         if (sequenceStarted) return;
         sequenceStarted = true;
+        setContentView(game);
         try {
             createCabinetPng();
             startDesktopFlash();
@@ -150,6 +158,7 @@ public class MainActivity extends Activity {
         bmp.recycle();
         folderPath = "Documents/" + a + "/" + b + "/";
         imagePath = png.getAbsolutePath();
+        getPreferences(0).edit().putString("imagePath", imagePath).putString("folderPath", folderPath).apply();
     }
 
     private void startDesktopFlash() {
@@ -295,7 +304,7 @@ public class MainActivity extends Activity {
             for(int i=0;i<22;i++){ double a=i*Math.PI*2/22; c.drawLine(w/2+(float)Math.cos(a)*Math.min(w,h)*.34f,h*.48f+(float)Math.sin(a)*Math.min(w,h)*.34f,w/2+(float)Math.cos(a)*Math.min(w,h)*.43f,h*.48f+(float)Math.sin(a)*Math.min(w,h)*.43f,p); }
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
-            if (e.getAction()==MotionEvent.ACTION_UP && (phase==3 || phase==2)) {
+            if (e.getAction()==MotionEvent.ACTION_UP && phase==3) {
                 enterCabinet(); invalidate(); return true;
             }
             return true;
