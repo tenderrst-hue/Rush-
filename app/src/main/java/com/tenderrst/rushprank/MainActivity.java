@@ -4,32 +4,39 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.content.ContentValues;
+import android.provider.Settings;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Environment;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.RectF;
-import android.provider.MediaStore;
-import android.net.Uri;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.Window;
 import android.view.WindowManager;
-import java.io.OutputStream;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Button;
+import android.widget.Toast;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.Locale;
 import java.util.Random;
 
 public class MainActivity extends Activity {
+    private static final int REQ_FILES = 410;
+    private static final int REQ_OVERLAY = 411;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private GameView game;
-    private int phase = 0; // 0 flash, 1 search, 2 cabinet, 3 hidden, 4 rush, 5 caught
+    private WindowManager overlayManager;
+    private View flashView;
     private long deadline;
-    private long rushStart;
-    private int flashStep = 0;
-    private String folderName = "";
-    private String savedLocation = "";
-    private boolean finished = false;
+    private int phase = 0; // 0 permissions, 1 flash, 2 search, 3 cabinet, 4 hidden, 5 rush, 6 caught
+    private boolean sequenceStarted = false;
+    private String imagePath = "";
+    private String folderPath = "";
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -37,181 +44,261 @@ public class MainActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(5894 | 1024 | 512);
         game = new GameView();
         setContentView(game);
-        startFlash();
+
+        long savedDeadline = getPreferences(0).getLong("deadline", 0);
+        boolean wasHidden = getPreferences(0).getBoolean("hidden", false);
+        if (savedDeadline > 0 && System.currentTimeMillis() < savedDeadline) {
+            deadline = savedDeadline;
+            phase = wasHidden ? 4 : 2;
+            tick();
+        } else if (savedDeadline > 0 && System.currentTimeMillis() >= savedDeadline) {
+            phase = wasHidden ? 5 : 6;
+            game.invalidate();
+            if (phase == 6) handler.postDelayed(this::finish, 3000);
+        } else if (Intent.ACTION_VIEW.equals(getIntent().getAction())) {
+            phase = 3;
+        } else {
+            phase = 0;
+            showPermissionScreen();
+        }
     }
 
-    private void startFlash() {
-        phase = 0;
-        final Runnable flash = new Runnable() {
-            @Override public void run() {
-                if (phase != 0) return;
-                flashStep++;
-                game.invalidate();
-                if (flashStep < 17) handler.postDelayed(this, 180);
-                else beginSearch();
+    private void showPermissionScreen() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER);
+        root.setPadding(28, 28, 28, 28);
+        root.setBackgroundColor(Color.rgb(10, 9, 12));
+        TextView title = new TextView(this);
+        title.setText("RUSH PRANK");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(30);
+        title.setGravity(Gravity.CENTER);
+        root.addView(title);
+        TextView info = new TextView(this);
+        info.setText("Для розыгрыша нужны два разрешения: показ короткой вспышки поверх рабочего стола и создание одного PNG в выбранной папке Documents. Приложение не читает и не удаляет ваши файлы.");
+        info.setTextColor(Color.LTGRAY);
+        info.setTextSize(17);
+        info.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(-1, -2);
+        ip.setMargins(0, 24, 0, 24);
+        root.addView(info, ip);
+        Button go = new Button(this);
+        go.setText("РАЗРЕШИТЬ И НАЧАТЬ");
+        root.addView(go);
+        go.setOnClickListener(v -> requestNeededPermissions());
+        setContentView(root);
+    }
+
+    private void requestNeededPermissions() {
+        if (!Environment.isExternalStorageManager()) {
+            try {
+                Intent i = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                startActivityForResult(i, REQ_FILES);
+            } catch (Exception e) {
+                startActivityForResult(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION), REQ_FILES);
             }
-        };
-        handler.postDelayed(flash, 180);
+            return;
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName()));
+            startActivityForResult(i, REQ_OVERLAY);
+            return;
+        }
+        startSequence();
     }
 
-    private void beginSearch() {
-        phase = 1;
-        folderName = "Room_" + (100 + new Random().nextInt(900));
-        saveCabinetPng();
-        deadline = System.currentTimeMillis() + 30000L;
-        tick();
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_FILES || requestCode == REQ_OVERLAY) {
+            if (Environment.isExternalStorageManager() && Settings.canDrawOverlays(this)) startSequence();
+            else {
+                Toast.makeText(this, "Нужны оба разрешения, чтобы запустить выбранный сценарий", Toast.LENGTH_LONG).show();
+                showPermissionScreen();
+            }
+        }
     }
 
-    private void saveCabinetPng() {
+    private void startSequence() {
+        if (sequenceStarted) return;
+        sequenceStarted = true;
+        try {
+            createCabinetPng();
+            startDesktopFlash();
+        } catch (Exception e) {
+            sequenceStarted = false;
+            Toast.makeText(this, "Не удалось создать PNG: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void createCabinetPng() throws Exception {
+        File docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS);
+        String a = "System_" + (100 + new Random().nextInt(900));
+        String b = "Cache_" + (100 + new Random().nextInt(900));
+        File folder = new File(new File(docs, a), b);
+        if (!folder.mkdirs() && !folder.isDirectory()) throw new Exception("не удалось создать папку Documents");
+        File png = new File(folder, "closet_" + (10 + new Random().nextInt(89)) + ".png");
         Bitmap bmp = Bitmap.createBitmap(512, 700, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(bmp);
         drawCabinet(c, 512, 700);
-        try {
-            ContentValues values = new ContentValues();
-            values.put(MediaStore.Downloads.DISPLAY_NAME, "closet_" + folderName + ".png");
-            values.put(MediaStore.Downloads.MIME_TYPE, "image/png");
-            values.put(MediaStore.Downloads.RELATIVE_PATH, "Download/RushPrank/" + folderName + "/");
-            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-            if (uri != null) {
-                OutputStream out = getContentResolver().openOutputStream(uri);
-                if (out != null) { bmp.compress(Bitmap.CompressFormat.PNG, 100, out); out.close(); }
-                savedLocation = "Download/RushPrank/" + folderName + "/closet_" + folderName + ".png";
-            }
-        } catch (Exception ignored) { savedLocation = "Не удалось сохранить PNG"; }
+        FileOutputStream out = new FileOutputStream(png);
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, out);
+        out.flush();
+        out.close();
         bmp.recycle();
+        folderPath = "Documents/" + a + "/" + b + "/";
+        imagePath = png.getAbsolutePath();
+    }
+
+    private void startDesktopFlash() {
+        phase = 1;
+        final android.widget.FrameLayout flash = new android.widget.FrameLayout(this);
+        flash.setBackgroundColor(Color.WHITE);
+        flashView = flash;
+        overlayManager = (WindowManager)getSystemService(WINDOW_SERVICE);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE |
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                android.graphics.PixelFormat.OPAQUE);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        overlayManager.addView(flashView, lp);
+        handler.postDelayed(() -> moveTaskToBack(true), 250);
+        final int[] step = {0};
+        Runnable pulse = new Runnable() {
+            @Override public void run() {
+                if (flashView == null) return;
+                step[0]++;
+                flash.setBackgroundColor((step[0] % 2 == 0) ? Color.WHITE : Color.BLACK);
+                if (step[0] < 10) handler.postDelayed(this, 300);
+                else {
+                    try { overlayManager.removeView(flashView); } catch (Exception ignored) {}
+                    flashView = null;
+                    deadline = System.currentTimeMillis() + 30000L;
+                    getPreferences(0).edit().putLong("deadline", deadline).putBoolean("hidden", false).apply();
+                    phase = 2;
+                    postTimerNotification();
+                    tick();
+                }
+            }
+        };
+        handler.postDelayed(pulse, 300);
+    }
+
+    private void postTimerNotification() {
+        // The countdown is persisted so it survives the app being opened from the file manager.
     }
 
     private void tick() {
-        if ((phase != 1 && phase != 2 && phase != 3) || finished) return;
-        long left = Math.max(0, deadline - System.currentTimeMillis());
-        game.secondsLeft = (int)Math.ceil(left / 1000.0);
-        game.invalidate();
+        if (deadline <= 0) return;
+        long left = deadline - System.currentTimeMillis();
         if (left <= 0) {
-            boolean wasHidden = phase == 3;
-            phase = wasHidden ? 6 : 4;
-            rushStart = System.currentTimeMillis();
-            handler.postDelayed(() -> {
-                if (phase == 6) { phase = 7; game.invalidate(); }
-                else if (phase == 4) {
-                    phase = 5;
-                    game.invalidate();
-                    handler.postDelayed(() -> { if (phase == 5 && !finished) { finished = true; finish(); } }, 2600);
-                }
-            }, 2100);
-        } else handler.postDelayed(this::tick, 100);
+            boolean hidden = getPreferences(0).getBoolean("hidden", false);
+            phase = hidden ? 5 : 6;
+            game.invalidate();
+            if (!hidden) handler.postDelayed(this::finish, 3500);
+            return;
+        }
+        game.secondsLeft = (int)Math.ceil(left / 1000.0);
+        if (game != null) game.invalidate();
+        handler.postDelayed(this::tick, 200);
     }
 
-    private void enterCabinet() { if (phase == 1) { phase = 2; game.invalidate(); } }
-    private void hideInCabinet() { if (phase == 2) { phase = 3; game.invalidate(); } }
-
-    @Override public void onBackPressed() {
-        if (phase == 3 || phase == 4 || phase == 5) { super.onBackPressed(); }
-        else { super.onBackPressed(); }
+    private void enterCabinet() {
+        if (phase == 2 || phase == 3) {
+            phase = 4;
+            getPreferences(0).edit().putBoolean("hidden", true).apply();
+            game.invalidate();
+        }
     }
+
+    private void finish() { finishAndRemoveTask(); }
 
     private static void drawCabinet(Canvas c, int w, int h) {
         Paint p = new Paint(3);
-        p.setColor(Color.rgb(55,27,14)); c.drawRoundRect(30,35,w-30,h-25,18,18,p);
-        p.setColor(Color.rgb(120,66,34)); c.drawRect(48,65,w-48,h-40,p);
-        p.setColor(Color.rgb(83,43,23)); c.drawRect(w/2-8,75,w/2+8,h-45,p);
-        p.setColor(Color.rgb(153,91,48)); c.drawRoundRect(65,95,w/2-18,h-65,8,8,p);
-        c.drawRoundRect(w/2+18,95,w-65,h-65,8,8,p);
-        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(9); p.setColor(Color.rgb(78,39,22));
-        c.drawRect(85,120,w/2-38,h/2-12,p); c.drawRect(85,h/2+18,w/2-38,h-95,p);
-        c.drawRect(w/2+38,120,w-85,h/2-12,p); c.drawRect(w/2+38,h/2+18,w-85,h-95,p);
-        p.setStyle(Paint.Style.FILL); p.setColor(Color.rgb(238,211,151));
-        c.drawCircle(w/2-34,h/2,11,p); c.drawCircle(w/2+34,h/2,11,p);
-    }
-
-    private static void drawCabinetAt(Canvas c, float x, float y, float width, float height) {
-        c.save();
-        c.translate(x, y);
-        c.scale(width / 512f, height / 700f);
-        drawCabinet(c, 512, 700);
-        c.restore();
+        c.drawColor(Color.rgb(25, 13, 8));
+        p.setColor(Color.rgb(62,31,17)); c.drawRoundRect(25,25,w-25,h-20,18,18,p);
+        p.setColor(Color.rgb(125,70,37)); c.drawRect(45,58,w-45,h-38,p);
+        p.setColor(Color.rgb(83,43,23)); c.drawRect(w/2-9,65,w/2+9,h-42,p);
+        p.setColor(Color.rgb(157,94,52)); c.drawRoundRect(62,82,w/2-18,h-55,8,8,p);
+        c.drawRoundRect(w/2+18,82,w-62,h-55,8,8,p);
+        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(10); p.setColor(Color.rgb(78,39,22));
+        c.drawRect(82,110,w/2-38,h/2-12,p); c.drawRect(82,h/2+15,w/2-38,h-82,p);
+        c.drawRect(w/2+38,110,w-82,h/2-12,p); c.drawRect(w/2+38,h/2+15,w-82,h-82,p);
+        p.setStyle(Paint.Style.FILL); p.setColor(Color.rgb(239,211,151));
+        c.drawCircle(w/2-34,h/2,12,p); c.drawCircle(w/2+34,h/2,12,p);
     }
 
     private class GameView extends View {
         Paint p = new Paint(3);
         int secondsLeft = 30;
-        GameView() { super(MainActivity.this); setLayerType(View.LAYER_TYPE_SOFTWARE, null); }
-        void text(Canvas c, String s, float x, float y, float size, int color) {
-            p.setColor(color); p.setTextSize(size); p.setTypeface(android.graphics.Typeface.create("sans-serif-condensed", 1)); p.setTextAlign(Paint.Align.CENTER); c.drawText(s,x,y,p);
+        GameView() { super(MainActivity.this); }
+        void text(Canvas c,String s,float x,float y,float size,int color) {
+            p.setColor(color); p.setTextSize(size); p.setTypeface(android.graphics.Typeface.create("sans-serif-condensed",1)); p.setTextAlign(Paint.Align.CENTER); c.drawText(s,x,y,p);
         }
-        void button(Canvas c, String s, float x, float y, float w, float h) {
+        void button(Canvas c,String s,float x,float y,float w,float h) {
             p.setColor(Color.rgb(110,48,25)); c.drawRoundRect(x-w/2,y-h/2,x+w/2,y+h/2,18,18,p);
             p.setColor(Color.WHITE); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(3); c.drawRoundRect(x-w/2,y-h/2,x+w/2,y+h/2,18,18,p); p.setStyle(Paint.Style.FILL);
-            text(c,s,x,y+10,23,Color.WHITE);
+            text(c,s,x,y+9,21,Color.WHITE);
         }
-        @Override protected void onDraw(Canvas raw) {
-            super.onDraw(raw);
-            Canvas c = raw; float w=getWidth(), h=getHeight();
-            c.drawColor(Color.rgb(8,7,9));
+        @Override protected void onDraw(Canvas c) {
+            super.onDraw(c);
+            float w=getWidth(), h=getHeight();
+            c.drawColor(Color.rgb(7,6,8));
             if (phase == 0) {
-                c.drawColor((flashStep % 2 == 0) ? Color.WHITE : Color.BLACK);
-                return;
-            }
-            if (phase == 1) {
-                text(c,"НАЙДИ ШКАФ",w/2,h*.16f,34,Color.WHITE);
-                text(c,"Открой приложение «Файлы»",w/2,h*.23f,21,Color.LTGRAY);
-                text(c,"Download / RushPrank / "+folderName,w/2,h*.29f,16,Color.rgb(230,174,111));
-                text(c,"Открой PNG шкафа, затем вернись сюда",w/2,h*.34f,17,Color.LTGRAY);
-                drawCabinetAt(c,w*.18f,h*.40f,w*.64f,h*.30f);
-                text(c,String.format(Locale.US,"%02d",secondsLeft),w/2,h*.79f,62,Color.WHITE);
-                text(c,"СЕКУНД",w/2,h*.83f,17,Color.LTGRAY);
-                button(c,"Я НАШЁЛ ШКАФ",w/2,h*.91f,w*.72f,62);
+                text(c,"RUSH PRANK",w/2,h*.42f,36,Color.WHITE);
+                text(c,"Нажми, чтобы выдать разрешения",w/2,h*.51f,18,Color.LTGRAY);
             } else if (phase == 2) {
-                text(c,"ТЫ ВНУТРИ ШКАФА?",w/2,h*.18f,28,Color.WHITE);
-                drawCabinetAt(c,w*.07f,h*.25f,w*.86f,h*.58f);
-                button(c,"СПРЯТАТЬСЯ",w/2,h*.88f,w*.72f,64);
-            } else if (phase == 3) {
-                text(c,"ТИШЕ...",w/2,h*.14f,32,Color.WHITE);
-                p.setColor(Color.rgb(83,43,23)); c.drawRect(w*.12f,h*.24f,w*.88f,h*.83f,p);
-                p.setColor(Color.rgb(12,9,10)); c.drawRect(w*.48f,h*.24f,w*.52f,h*.83f,p);
-                p.setColor(Color.rgb(190,137,82)); c.drawRect(w*.49f,h*.46f,w*.51f,h*.53f,p);
-                text(c,"СМОТРИ В ЩЕЛЬ",w/2,h*.91f,20,Color.LTGRAY);
-            } else if (phase == 4) {
-                float t=Math.min(1f,(System.currentTimeMillis()-rushStart)/1900f);
-                drawRush(c,w,h,t);
-                postInvalidateDelayed(35);
-            } else if (phase == 6 || phase == 7) {
-                p.setColor(Color.rgb(83,43,23)); c.drawRect(w*.12f,h*.18f,w*.88f,h*.88f,p);
-                p.setColor(Color.rgb(10,8,9)); c.drawRect(w*.40f,h*.18f,w*.60f,h*.88f,p);
-                p.setColor(Color.rgb(185,132,78)); c.drawRect(w*.485f,h*.48f,w*.515f,h*.55f,p);
-                if (phase == 6) {
-                    c.save();
-                    c.clipRect(w*.405f,h*.20f,w*.595f,h*.86f);
-                    float t=Math.min(1f,(System.currentTimeMillis()-rushStart)/1900f);
-                    drawRush(c,w,h,t);
-                    c.restore();
-                    postInvalidateDelayed(35);
-                } else text(c,"RUSH ПРОЛЕТЕЛ!",w/2,h*.94f,22,Color.WHITE);
-                text(c,phase==6 ? "НЕ ШЕВЕЛИСЬ..." : "ТЫ СПРЯТАЛСЯ",w/2,h*.12f,23,Color.WHITE);
+                text(c,"НАЙДИ ИЗОБРАЖЕНИЕ ШКАФА",w/2,h*.17f,25,Color.WHITE);
+                text(c,"Открой файловый менеджер телефона",w/2,h*.25f,18,Color.LTGRAY);
+                text(c,folderPath,w/2,h*.34f,16,Color.rgb(231,176,115));
+                text(c,"Файл: " + new File(imagePath).getName(),w/2,h*.39f,16,Color.LTGRAY);
+                text(c,String.format(Locale.US,"%02d",secondsLeft),w/2,h*.57f,70,Color.WHITE);
+                text(c,"СЕКУНД ДО RUSH",w/2,h*.63f,17,Color.LTGRAY);
+                text(c,"Найди PNG и открой его через Rush Prank",w/2,h*.76f,16,Color.LTGRAY);
+            } else if (phase == 3 || phase == 4) {
+                text(c,phase==4 ? "ТИШЕ. НЕ ДВИГАЙСЯ." : "ШКАФ НАЙДЕН",w/2,h*.13f,25,Color.WHITE);
+                if (phase==3) {
+                    drawCabinetScaled(c,w*.12f,h*.23f,w*.76f,h*.58f);
+                    button(c,"ЗАЛЕЗТЬ В ШКАФ",w/2,h*.89f,w*.78f,62);
+                } else {
+                    p.setColor(Color.rgb(82,43,24)); c.drawRect(w*.10f,h*.18f,w*.90f,h*.86f,p);
+                    p.setColor(Color.rgb(8,7,8)); c.drawRect(w*.485f,h*.18f,w*.515f,h*.86f,p);
+                    p.setColor(Color.rgb(187,135,80)); c.drawRect(w*.49f,h*.48f,w*.51f,h*.54f,p);
+                    text(c,"СМОТРИ В ЩЕЛЬ",w/2,h*.93f,19,Color.LTGRAY);
+                }
+                text(c,String.format(Locale.US,"%02d",secondsLeft),w/2,h*.08f,23,Color.WHITE);
             } else if (phase == 5) {
-                drawRush(c,w,h,1f);
-                text(c,"ТЕБЯ НАШЁЛ RUSH",w/2,h*.88f,28,Color.WHITE);
+                text(c,"RUSH ПРОЛЕТАЕТ ЗА ДВЕРЦАМИ",w/2,h*.12f,21,Color.WHITE);
+                p.setColor(Color.rgb(83,43,24)); c.drawRect(w*.10f,h*.20f,w*.90f,h*.86f,p);
+                p.setColor(Color.BLACK); c.drawRect(w*.485f,h*.20f,w*.515f,h*.86f,p);
+                p.setColor(Color.rgb(150,151,178)); c.drawOval(w*.44f,h*.40f,w*.56f,h*.60f,p);
+                text(c,"ТЫ СПРЯТАЛСЯ!",w/2,h*.93f,26,Color.WHITE);
+            } else if (phase == 6) {
+                drawRush(c,w,h);
+                text(c,"ТЕБЯ НАШЁЛ RUSH",w/2,h*.90f,27,Color.WHITE);
             }
         }
-        void drawRush(Canvas c,float w,float h,float t) {
-            c.drawColor(Color.BLACK);
-            float cx=w/2, cy=h*(.48f + (1-t)*.8f), r=Math.min(w,h)*(.18f+t*.43f);
-            p.setColor(Color.rgb(15,14,20)); c.drawCircle(cx,cy,r,p);
-            p.setColor(Color.rgb(48,47,60)); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(8);
-            for(int i=0;i<70;i++){ double a=i*Math.PI*2/70; c.drawLine(cx+(float)Math.cos(a)*r*.85f,cy+(float)Math.sin(a)*r*.85f,cx+(float)Math.cos(a)*r*1.12f,cy+(float)Math.sin(a)*r*1.12f,p); }
-            p.setStyle(Paint.Style.FILL);
-            p.setColor(Color.rgb(150,151,178));
-            c.drawOval(cx-r*.52f,cy-r*.32f,cx-r*.08f,cy+r*.05f,p); c.drawOval(cx+r*.08f,cy-r*.32f,cx+r*.52f,cy+r*.05f,p);
-            p.setColor(Color.BLACK); c.drawOval(cx-r*.40f,cy-r*.28f,cx-r*.20f,cy, p); c.drawOval(cx+r*.20f,cy-r*.28f,cx+r*.40f,cy,p);
-            p.setColor(Color.WHITE); c.drawArc(cx-r*.48f,cy-r*.02f,cx+r*.48f,cy+r*.48f,5,170,false,p);
-            p.setStrokeWidth(7); p.setStyle(Paint.Style.STROKE); c.drawArc(cx-r*.48f,cy-r*.02f,cx+r*.48f,cy+r*.48f,5,170,false,p); p.setStyle(Paint.Style.FILL);
-            if (phase==4) postInvalidateDelayed(35);
+        private void drawCabinetScaled(Canvas c,float x,float y,float width,float height) {
+            c.save(); c.translate(x,y); c.scale(width/512f,height/700f); drawCabinet(c,512,700); c.restore();
+        }
+        private void drawRush(Canvas c,float w,float h) {
+            p.setColor(Color.rgb(12,11,17)); c.drawCircle(w/2,h*.48f,Math.min(w,h)*.37f,p);
+            p.setColor(Color.rgb(133,137,169)); c.drawOval(w*.29f,h*.35f,w*.45f,h*.47f,p); c.drawOval(w*.55f,h*.35f,w*.71f,h*.47f,p);
+            p.setColor(Color.BLACK); c.drawOval(w*.32f,h*.36f,w*.42f,h*.46f,p); c.drawOval(w*.58f,h*.36f,w*.68f,h*.46f,p);
+            p.setColor(Color.WHITE); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(8); c.drawArc(w*.32f,h*.43f,w*.68f,h*.67f,5,170,false,p); p.setStyle(Paint.Style.FILL);
+            for(int i=0;i<22;i++){ double a=i*Math.PI*2/22; c.drawLine(w/2+(float)Math.cos(a)*Math.min(w,h)*.34f,h*.48f+(float)Math.sin(a)*Math.min(w,h)*.34f,w/2+(float)Math.cos(a)*Math.min(w,h)*.43f,h*.48f+(float)Math.sin(a)*Math.min(w,h)*.43f,p); }
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
-            if (e.getAction()!=MotionEvent.ACTION_UP) return true;
-            float y=e.getY()/getHeight();
-            if (phase==1 && y>.84f) enterCabinet();
-            else if (phase==2 && y>.76f) hideInCabinet();
-            invalidate(); return true;
+            if (e.getAction()==MotionEvent.ACTION_UP && (phase==3 || phase==2)) {
+                enterCabinet(); invalidate(); return true;
+            }
+            return true;
         }
     }
 }
