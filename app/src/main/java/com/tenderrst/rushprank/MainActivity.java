@@ -111,7 +111,6 @@ public class MainActivity extends Activity {
 
     private static void drawCabinet(Canvas c, int w, int h) {
         Paint p = new Paint(3);
-        c.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR);
         p.setColor(Color.rgb(55,27,14)); c.drawRoundRect(30,35,w-30,h-25,18,18,p);
         p.setColor(Color.rgb(120,66,34)); c.drawRect(48,65,w-48,h-40,p);
         p.setColor(Color.rgb(83,43,23)); c.drawRect(w/2-8,75,w/2+8,h-45,p);
@@ -122,6 +121,14 @@ public class MainActivity extends Activity {
         c.drawRect(w/2+38,120,w-85,h/2-12,p); c.drawRect(w/2+38,h/2+18,w-85,h-95,p);
         p.setStyle(Paint.Style.FILL); p.setColor(Color.rgb(238,211,151));
         c.drawCircle(w/2-34,h/2,11,p); c.drawCircle(w/2+34,h/2,11,p);
+    }
+
+    private static void drawCabinetAt(Canvas c, float x, float y, float width, float height) {
+        c.save();
+        c.translate(x, y);
+        c.scale(width / 512f, height / 700f);
+        drawCabinet(c, 512, 700);
+        c.restore();
     }
 
     private class GameView extends View {
@@ -149,14 +156,13 @@ public class MainActivity extends Activity {
                 text(c,"Открой приложение «Файлы»",w/2,h*.23f,21,Color.LTGRAY);
                 text(c,"Download / RushPrank / "+folderName,w/2,h*.29f,16,Color.rgb(230,174,111));
                 text(c,"Открой PNG шкафа, затем вернись сюда",w/2,h*.34f,17,Color.LTGRAY);
-                p.setColor(Color.rgb(130,70,37)); c.drawRoundRect(w*.18f,h*.40f,w*.82f,h*.70f,16,16,p);
-                drawCabinet(c,(int)(w*.64f),(int)(h*.30f));
+                drawCabinetAt(c,w*.18f,h*.40f,w*.64f,h*.30f);
                 text(c,String.format(Locale.US,"%02d",secondsLeft),w/2,h*.79f,62,Color.WHITE);
                 text(c,"СЕКУНД",w/2,h*.83f,17,Color.LTGRAY);
                 button(c,"Я НАШЁЛ ШКАФ",w/2,h*.91f,w*.72f,62);
             } else if (phase == 2) {
                 text(c,"ТЫ ВНУТРИ ШКАФА?",w/2,h*.18f,28,Color.WHITE);
-                drawCabinet(c,(int)(w*.86f),(int)(h*.58f));
+                drawCabinetAt(c,w*.07f,h*.25f,w*.86f,h*.58f);
                 button(c,"СПРЯТАТЬСЯ",w/2,h*.88f,w*.72f,64);
             } else if (phase == 3) {
                 text(c,"ТИШЕ...",w/2,h*.14f,32,Color.WHITE);
