@@ -47,23 +47,22 @@ public class MainActivity extends Activity {
 
         long savedDeadline = getPreferences(0).getLong("deadline", 0);
         boolean wasHidden = getPreferences(0).getBoolean("hidden", false);
-        if (savedDeadline > 0 && System.currentTimeMillis() < savedDeadline) {
-            deadline = savedDeadline;
-            phase = wasHidden ? 4 : 2;
-            tick();
-        } else if (savedDeadline > 0 && System.currentTimeMillis() >= savedDeadline) {
-            phase = wasHidden ? 5 : 6;
-            game.invalidate();
-            if (phase == 6) handler.postDelayed(this::exitPrank, 3000);
-        } else if (Intent.ACTION_VIEW.equals(getIntent().getAction())) {
+        if (Intent.ACTION_VIEW.equals(getIntent().getAction())) {
             deadline = savedDeadline;
             imagePath = getPreferences(0).getString("imagePath", "");
             folderPath = getPreferences(0).getString("folderPath", "");
-            boolean hidden = getPreferences(0).getBoolean("hidden", false);
-            if (deadline > 0 && System.currentTimeMillis() >= deadline) phase = hidden ? 5 : 6;
-            else phase = hidden ? 4 : 3;
+            if (deadline > 0 && System.currentTimeMillis() >= deadline) phase = wasHidden ? 5 : 6;
+            else phase = wasHidden ? 4 : 3;
             if (deadline > 0 && System.currentTimeMillis() < deadline) tick();
             else if (phase == 6) handler.postDelayed(this::exitPrank, 3500);
+        } else if (savedDeadline > 0 && System.currentTimeMillis() < savedDeadline) {
+            deadline = savedDeadline;
+            phase = wasHidden ? 4 : 2;
+            tick();
+        } else if (savedDeadline > 0) {
+            phase = wasHidden ? 5 : 6;
+            game.invalidate();
+            if (phase == 6) handler.postDelayed(this::exitPrank, 3500);
         } else {
             phase = 0;
             showPermissionScreen();
