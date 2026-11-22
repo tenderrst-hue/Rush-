@@ -82,20 +82,22 @@ public class MainActivity extends Activity {
     }
 
     private void tick() {
-        if (phase != 1 || finished) return;
+        if ((phase != 1 && phase != 2 && phase != 3) || finished) return;
         long left = Math.max(0, deadline - System.currentTimeMillis());
         game.secondsLeft = (int)Math.ceil(left / 1000.0);
         game.invalidate();
         if (left <= 0) {
-            phase = 4;
+            boolean wasHidden = phase == 3;
+            phase = wasHidden ? 6 : 4;
             rushStart = System.currentTimeMillis();
             handler.postDelayed(() -> {
-                if (phase == 4) {
+                if (phase == 6) { phase = 7; game.invalidate(); }
+                else if (phase == 4) {
                     phase = 5;
                     game.invalidate();
                     handler.postDelayed(() -> { if (phase == 5 && !finished) { finished = true; finish(); } }, 2600);
                 }
-            }, 1900);
+            }, 2100);
         } else handler.postDelayed(this::tick, 100);
     }
 
@@ -166,6 +168,19 @@ public class MainActivity extends Activity {
                 float t=Math.min(1f,(System.currentTimeMillis()-rushStart)/1900f);
                 drawRush(c,w,h,t);
                 postInvalidateDelayed(35);
+            } else if (phase == 6 || phase == 7) {
+                p.setColor(Color.rgb(83,43,23)); c.drawRect(w*.12f,h*.18f,w*.88f,h*.88f,p);
+                p.setColor(Color.rgb(10,8,9)); c.drawRect(w*.40f,h*.18f,w*.60f,h*.88f,p);
+                p.setColor(Color.rgb(185,132,78)); c.drawRect(w*.485f,h*.48f,w*.515f,h*.55f,p);
+                if (phase == 6) {
+                    c.save();
+                    c.clipRect(w*.405f,h*.20f,w*.595f,h*.86f);
+                    float t=Math.min(1f,(System.currentTimeMillis()-rushStart)/1900f);
+                    drawRush(c,w,h,t);
+                    c.restore();
+                    postInvalidateDelayed(35);
+                } else text(c,"RUSH ПРОЛЕТЕЛ!",w/2,h*.94f,22,Color.WHITE);
+                text(c,phase==6 ? "НЕ ШЕВЕЛИСЬ..." : "ТЫ СПРЯТАЛСЯ",w/2,h*.12f,23,Color.WHITE);
             } else if (phase == 5) {
                 drawRush(c,w,h,1f);
                 text(c,"ТЕБЯ НАШЁЛ RUSH",w/2,h*.88f,28,Color.WHITE);
